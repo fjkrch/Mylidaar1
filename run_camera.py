@@ -3,27 +3,7 @@ import cv2
 import matplotlib
 import numpy as np
 import torch
-import open3d as o3d
 from depth_anything_v2.dpt import DepthAnythingV2
-
-def depth_to_point_cloud(depth, rgb, fx, fy, cx, cy):
-    """Convert depth map and RGB image to Open3D point cloud."""
-    h, w = depth.shape
-    points = []
-    colors = []
-    for v in range(h):
-        for u in range(w):
-            z = depth[v, u]
-            if z == 0:
-                continue
-            x = (u - cx) * z / fx
-            y = (v - cy) * z / fy
-            points.append([x, y, z])
-            colors.append(rgb[v, u] / 255.0)
-    pc = o3d.geometry.PointCloud()
-    pc.points = o3d.utility.Vector3dVector(np.array(points))
-    pc.colors = o3d.utility.Vector3dVector(np.array(colors))
-    return pc
 
 if __name__ == '__main__':
     # Argument parser for customizable options
@@ -58,9 +38,6 @@ if __name__ == '__main__':
     focal_length_px = 800  # Adjust this for your camera
     real_face_width_cm = 13  # Average human face width in cm
 
-    # Define a scaling factor to make the depth map larger
-    scale_factor = 4  # Increase this value to make the depth map bigger
-
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -75,6 +52,11 @@ if __name__ == '__main__':
 
         # Generate the depth map using Depth Anything V2
         depth = depth_anything.infer_image(frame_for_depth, args.input_size)
+
+        # Print AI-estimated depth of the pixel in the middle of the frame
+        mid_y = depth.shape[0] // 2
+        mid_x = depth.shape[1] // 2
+        print(f"AI-estimated depth at center pixel: {depth[mid_y, mid_x]:.4f}")
 
         # Normalize the depth map for visualization
         depth_vis = (depth - depth.min()) / (depth.max() - depth.min()) * 255.0
@@ -119,19 +101,6 @@ if __name__ == '__main__':
         key = cv2.waitKey(1) & 0xFF
         if key == ord('q'):
             break
-        elif key == ord('s'):
-            # Save point cloud when 's' is pressed
-            h, w = frame.shape[:2]
-            fx = fy = focal_length_px
-            cx = w / 2
-            cy = h / 2
-            # Resize depth to match frame size
-            depth_for_pc = cv2.resize(depth, (w, h)).astype(np.float32)
-            # Optionally scale depth to meters (adjust as needed)
-            depth_for_pc = (depth_for_pc - depth_for_pc.min()) / (depth_for_pc.max() - depth_for_pc.min() + 1e-8) * 2.0
-            pc = depth_to_point_cloud(depth_for_pc, frame, fx, fy, cx, cy)
-            o3d.io.write_point_cloud("point_cloud.ply", pc)
-            print("Point cloud saved as point_cloud.ply")
 
     # Release resources and close windows
     cap.release()
