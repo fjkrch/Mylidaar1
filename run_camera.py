@@ -101,6 +101,25 @@ if __name__ == '__main__':
         key = cv2.waitKey(1) & 0xFF
         if key == ord('q'):
             break
+        elif key == ord('s'):
+            # Save AI-estimated depth as point cloud (PLY, XYZ only)
+            depth_for_save = cv2.resize(depth, (frame.shape[1], frame.shape[0]))
+            h, w = depth_for_save.shape
+            xx, yy = np.meshgrid(np.arange(w), np.arange(h))
+            points = np.stack([xx.flatten(), yy.flatten(), depth_for_save.flatten()], axis=1)
+
+            ply_header = '''ply
+format ascii 1.0
+element vertex {vertex_count}
+property float x
+property float y
+property float z
+end_header
+'''
+            with open('depth_points.ply', 'w') as f:
+                f.write(ply_header.format(vertex_count=points.shape[0]))
+                np.savetxt(f, points, fmt='%.4f %.4f %.4f')
+            print("PLY point cloud saved as depth_points.ply")
 
     # Release resources and close windows
     cap.release()
