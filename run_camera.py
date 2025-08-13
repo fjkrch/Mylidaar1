@@ -3,7 +3,27 @@ import cv2
 import matplotlib
 import numpy as np
 import torch
+import open3d as o3d
 from depth_anything_v2.dpt import DepthAnythingV2
+
+def depth_to_point_cloud(depth, rgb, fx, fy, cx, cy):
+    """Convert depth map and RGB image to Open3D point cloud."""
+    h, w = depth.shape
+    points = []
+    colors = []
+    for v in range(h):
+        for u in range(w):
+            z = depth[v, u]
+            if z == 0:
+                continue
+            x = (u - cx) * z / fx
+            y = (v - cy) * z / fy
+            points.append([x, y, z])
+            colors.append(rgb[v, u] / 255.0)
+    pc = o3d.geometry.PointCloud()
+    pc.points = o3d.utility.Vector3dVector(np.array(points))
+    pc.colors = o3d.utility.Vector3dVector(np.array(colors))
+    return pc
 
 if __name__ == '__main__':
     # Argument parser for customizable options
@@ -38,6 +58,9 @@ if __name__ == '__main__':
     focal_length_px = 800  # Adjust this for your camera
     real_face_width_cm = 13  # Average human face width in cm
 
+    # Define a scaling factor to make the depth map larger
+    scale_factor = 4  # Increase this value to make the depth map bigger
+
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -47,19 +70,25 @@ if __name__ == '__main__':
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         faces = face_cascade.detectMultiScale(gray, 1.3, 5)
 
+        # Resize frame for depth model input
+        frame_for_depth = cv2.resize(frame, (args.input_size, args.input_size))
+
         # Generate the depth map using Depth Anything V2
-        depth = depth_anything.infer_image(frame, args.input_size)
+        depth = depth_anything.infer_image(frame_for_depth, args.input_size)
 
         # Normalize the depth map for visualization
         depth_vis = (depth - depth.min()) / (depth.max() - depth.min()) * 255.0
         depth_vis = depth_vis.astype(np.uint8)
 
+        # Resize the depth map back to original frame size
+        depth_resized = cv2.resize(depth_vis, (frame.shape[1], frame.shape[0]))
+
         # Apply grayscale or colored depth visualization
         if args.grayscale:
-            depth_vis = np.repeat(depth_vis[..., np.newaxis], 3, axis=-1)
+            depth_resized = np.repeat(depth_resized[..., np.newaxis], 3, axis=-1)
         else:
             cmap = matplotlib.colormaps.get_cmap('Spectral_r')
-            depth_vis = (cmap(depth_vis)[:, :, :3] * 255)[:, :, ::-1].astype(np.uint8)
+            depth_resized = (cmap(depth_resized)[:, :, :3] * 255)[:, :, ::-1].astype(np.uint8)
 
         # Detect faces and calculate distance
         for (x, y, w, h) in faces:
@@ -77,17 +106,32 @@ if __name__ == '__main__':
                 cv2.putText(frame, f"Depth: {face_depth:.2f}", (x, y - 10),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-        # Combine the original frame and depth visualization for side-by-side display
+        # Prepare a white split region (adjusted for the frame size)
         margin_width = 50
         split_region = np.ones((frame.shape[0], margin_width, 3), dtype=np.uint8) * 255
-        display_frame = cv2.hconcat([frame, split_region, depth_vis])
+
+        # Combine the frame and depth map
+        combined_frame = cv2.hconcat([frame, split_region, depth_resized])
 
         # Show the frame with depth information
-        cv2.imshow('Depth Anything V2 - Real Time', display_frame)
+        cv2.imshow('Depth Anything V2 - Real Time', combined_frame)
 
-        # Press 'q' to exit the loop
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
             break
+        elif key == ord('s'):
+            # Save point cloud when 's' is pressed
+            h, w = frame.shape[:2]
+            fx = fy = focal_length_px
+            cx = w / 2
+            cy = h / 2
+            # Resize depth to match frame size
+            depth_for_pc = cv2.resize(depth, (w, h)).astype(np.float32)
+            # Optionally scale depth to meters (adjust as needed)
+            depth_for_pc = (depth_for_pc - depth_for_pc.min()) / (depth_for_pc.max() - depth_for_pc.min() + 1e-8) * 2.0
+            pc = depth_to_point_cloud(depth_for_pc, frame, fx, fy, cx, cy)
+            o3d.io.write_point_cloud("point_cloud.ply", pc)
+            print("Point cloud saved as point_cloud.ply")
 
     # Release resources and close windows
     cap.release()
