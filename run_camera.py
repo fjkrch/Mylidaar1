@@ -31,7 +31,7 @@ if __name__ == '__main__':
     depth_anything = depth_anything.to(DEVICE).eval()
 
     # Initialize webcam and face detection
-    cap = cv2.VideoCapture(0)  # Open default webcam
+    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)  # Use DirectShow instead of MSMF  # Open default webcam
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 
     # Set your camera's focal length (in pixels)
@@ -76,9 +76,9 @@ if __name__ == '__main__':
         for (x, y, w, h) in faces:
             center_x = x + w // 2
             center_y = y + h // 2
-
-            if center_y < depth.shape[0] and center_x < depth.shape[1]:
-                face_depth = depth[center_y, center_x]
+            depth_for_display = cv2.resize(depth, (frame.shape[1], frame.shape[0]))
+            if center_y < depth_for_display.shape[0] and center_x < depth_for_display.shape[1]:
+                face_depth = depth_for_display[center_y, center_x]
                 estimated_distance_cm = (real_face_width_cm * focal_length_px) / w  # Distance estimation from camera
 
                 # Draw face rectangle and display depth information
@@ -108,6 +108,7 @@ if __name__ == '__main__':
             xx, yy = np.meshgrid(np.arange(w), np.arange(h))
             points = np.stack([xx.flatten(), yy.flatten(), depth_for_save.flatten()], axis=1)
 
+            # Save original point cloud
             ply_header = '''ply
 format ascii 1.0
 element vertex {vertex_count}
@@ -120,6 +121,40 @@ end_header
                 f.write(ply_header.format(vertex_count=points.shape[0]))
                 np.savetxt(f, points, fmt='%.4f %.4f %.4f')
             print("PLY point cloud saved as depth_points.ply")
+
+            # Find max AI depth and face depth for scaling
+            Q1 = np.percentile(depth_for_save, 25)
+            Q3 = np.percentile(depth_for_save, 75)
+            IQR = Q3 - Q1
+
+            lower_bound = Q1 - 1.5 * IQR
+            upper_bound = Q3 + 1.5 * IQR
+
+            filtered_depth = depth_for_save[(depth_for_save >= lower_bound) & (depth_for_save <= upper_bound)]
+            filtered_depth = np.percentile(filtered_depth,99)  # Use 99th percentile to avoid outliers
+            max_ai_depth = np.max(filtered_depth)
+            face_depths = []
+            for (x, y, w, h) in faces:
+                center_x = x + w // 2
+                center_y = y + h // 2
+                if center_y < depth_for_save.shape[0] and center_x < depth_for_save.shape[1]:
+                    face_depths.append(depth_for_save[center_y, center_x])
+            if face_depths:
+                face_depth = max(face_depths)  # Use max face depth if multiple faces
+                pinhole_estimate_cm = (real_face_width_cm * focal_length_px) / w if w != 0 else 0
+                # Example: scale AI depth difference to cm using pinhole model
+                ai_diff = max_ai_depth - face_depth
+                if ai_diff != 0 and pinhole_estimate_cm != 0:
+                    scale = pinhole_estimate_cm / ai_diff  # 1 unit AI depth = scale cm
+                    scaled_z = (depth_for_save - face_depth) * scale
+                    points_scaled = np.stack([xx.flatten(), yy.flatten(), scaled_z.flatten()], axis=1)
+                    comment = f"# a1: 1 AI depth unit = {scale:.4f} cm (face depth={face_depth:.2f}, pinhole={pinhole_estimate_cm:.2f}cm)\n,{max_ai_depth}"
+                    with open('depth_points_scaled.ply', 'w') as f:
+                        f.write(comment)
+                        f.write(ply_header.format(vertex_count=points_scaled.shape[0]))
+                        np.savetxt(f, points_scaled, fmt='%.4f %.4f %.4f')
+                    print("Scaled PLY point cloud saved as depth_points_scaled.ply")
+       
 
     # Release resources and close windows
     cap.release()
