@@ -131,7 +131,7 @@ end_header
             upper_bound = Q3 + 1.5 * IQR
 
             filtered_depth = depth_for_save[(depth_for_save >= lower_bound) & (depth_for_save <= upper_bound)]
-            filtered_depth = np.percentile(filtered_depth,99)  # Use 99th percentile to avoid outliers
+            filtered_depth = np.percentile(filtered_depth,95)  # Use 99th percentile to avoid outliers
             max_ai_depth = np.max(filtered_depth)
             face_depths = []
             for (x, y, w, h) in faces:
@@ -145,10 +145,11 @@ end_header
                 # Example: scale AI depth difference to cm using pinhole model
                 ai_diff = max_ai_depth - face_depth
                 if ai_diff != 0 and pinhole_estimate_cm != 0:
-                    scale = pinhole_estimate_cm / ai_diff  # 1 unit AI depth = scale cm
+                    scale = pinhole_estimate_cm / ai_diff  # 1 AI depth unit = scale cm
+                    # Multiply Z axis by scale after subtracting face_depth
                     scaled_z = (depth_for_save - face_depth) * scale
                     points_scaled = np.stack([xx.flatten(), yy.flatten(), scaled_z.flatten()], axis=1)
-                    comment = f"# a1: 1 AI depth unit = {scale:.4f} cm (face depth={face_depth:.2f}, pinhole={pinhole_estimate_cm:.2f}cm)\n,{max_ai_depth}"
+                    comment = f"# a1: 1 AI depth unit = {scale:.4f} cm (face depth={face_depth:.2f}, pinhole={pinhole_estimate_cm:.2f}cm, max AI depth={max_ai_depth:.2f})\n"
                     with open('depth_points_scaled.ply', 'w') as f:
                         f.write(comment)
                         f.write(ply_header.format(vertex_count=points_scaled.shape[0]))
